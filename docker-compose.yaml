@@ -1,0 +1,41 @@
+services:
+## criando serviço gerenciado do kafka
+  kafka: 
+    image: apache/kafka:4.1.0
+    ports:
+      - "9092:9092"    # host
+      - "9093:9093"    # controller
+      - "19092:19092"  # opcional expor DOCKER para debug
+    environment:
+      CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "HOST://0.0.0.0:9092,DOCKER://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "HOST://localhost:9092,DOCKER://kafka:19092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "HOST:PLAINTEXT,DOCKER:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "DOCKER"
+
+# serviço de ui para gerenciamento do kakfa, facilita a visualização e entendimento dos processos
+# provectuslabs é a empresa responsavel pela UI
+# dependencia do kakfa subir
+# 8080 # porta padrao
+  kafka-ui: 
+    image: provectuslabs/kafka-ui:latest 
+    depends_on:
+      - kafka 
+    ports:
+      - "8080:8080" 
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "local" 
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:19092"
+
+# criando um serviço para gerar dados automaticamente quando subir o kafka, utilizando os arquivos dockerfile.producer e producer.py
+  producer: 
+    container_name: producer
+    build:
+      context: .
+      dockerfile: Dockerfile.producer
+    depends_on:
+      - kafka

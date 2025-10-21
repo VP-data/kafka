@@ -1,0 +1,228 @@
+
+# Kafka Local + Kafka UI + Producer de Usuários
+
+Ambiente local que sobe um Apache Kafka em modo single-node (KRaft), uma interface visual Kafka UI para gerenciamento e um producer Python que publica continuamente cadastros de usuários brasileiros no tópico “mensagens”.
+
+## Visão geral
+
+- Kafka single-node com listeners para acesso via host e via rede Docker.
+- Kafka UI para criar/inspecionar tópicos, ver mensagens e metadados.
+- Producer em Python usando Faker pt_BR gerando eventos de cadastro de usuário no tópico “mensagens”.
+
+
+## Requisitos
+
+- Java JDK instalado; é recomendado configurar a variável de ambiente JAVA_HOME.
+- Docker e Docker Compose instalados e funcionando.
+- Python 3.9+ apenas se desejar rodar o producer/consumer localmente fora do Docker.
+
+
+## Como subir
+
+1) Clone o repositório e entre na pasta do projeto:
+```bash
+git clone <URL_DO_REPO>
+cd <PASTA_DO_REPO>
+```
+
+2) Suba os serviços (Kafka, Kafka UI e Producer):
+```bash
+docker compose up -d --build
+```
+
+3) Verifique o status e logs:
+```bash
+docker compose ps
+docker logs -f producer
+```
+
+4) Acesse a UI:
+
+- Abra http://localhost:8080, selecione o cluster “local” e visualize o tópico “mensagens”.
+
+
+## Estrutura do projeto
+
+```
+.
+├─ docker-compose.yaml
+├─ Dockerfile.producer
+├─ producer.py
+├─ consumer.py
+└─ README.md
+```
+
+
+## Configuração dos serviços
+
+- Kafka (apache/kafka:4.1.0) com três listeners:
+    - HOST://0.0.0.0:9092 (acesso pelo host, use localhost:9092).
+    - DOCKER://0.0.0.0:19092 (acesso entre contêineres, use kafka:19092).
+    - CONTROLLER://0.0.0.0:9093 (uso interno do KRaft).
+- Kafka UI (provectuslabs/kafka-ui) conectado ao broker via kafka:19092.
+- Producer em Python dentro de um contêiner próprio, enviando para o tópico “mensagens”.
+
+
+## Producer de usuários (Python)
+
+- Gera JSON com os campos: user_id, nome, cpf, data_nascimento, pais, estado, bairro, rua, telefone, email.
+- Usa locale pt_BR do Faker para dados realistas (nomes, CPF, endereços, telefones).
+- Chave da mensagem (Kafka key) é o user_id, útil para particionamento e ordenação por usuário.
+
+Exemplo do trecho principal (resumo do producer.py):
+
+```python
+from kafka import KafkaProducer
+from faker import Faker
+import time, json, random
+
+fake = Faker('pt_BR')
+producer = KafkaProducer(
+    bootstrap_servers="kafka:19092",  # dentro da rede docker
+    acks="all",
+    retries=3,
+    linger_ms=5,
+    value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode("utf-8"),
+    key_serializer=lambda k: k.encode("utf-8")
+)
+
+def generate_user_data():
+    user_id = str(random.randint(1, 1_000_000))
+    nome = fake.name()
+    cpf = fake.cpf().replace('.', '').replace('-', '')
+    nasc = fake.date_of_birth(minimum_age=18, maximum_age=80).isoformat()
+    pais = "Brasil"
+    estado = fake.estado_sigla()
+    bairro = fake.bairro()
+    rua = fake.street_name()
+    telefone = fake.phone_number()
+    email = fake.free_email()
+    return {
+        "user_id": user_id,
+        "nome": nome,
+        "cpf": cpf,
+        "data_nascimento": nasc,
+        "pais": pais,
+        "estado": estado,
+        "bairro": bairro,
+        "rua": rua,
+        "telefone": telefone,
+        "email": email
+    }
+
+if __name__ == "__main__":
+    topic = "mensagens"
+    while True:
+        data = generate_user_data()
+        key = data["user_id"]
+        producer.send(topic, key=key, value=data)
+        producer.flush()
+        time.sleep(1)
+```
+
+
+## Consumidor de exemplo
+
+O arquivo consumer.py consome do tópico e imprime no console; ajuste o bootstrap conforme o ambiente:
+
+- Dentro de contêiner/mesma rede Docker: kafka:19092.
+- Fora do Docker (no host): localhost:9092.
+
+Exemplo genérico:
+
+```python
+from kafka import KafkaConsumer
+import json
+
+consumer = KafkaConsumer(
+    "mensagens",
+    bootstrap_servers="localhost:9092",
+    auto_offset_reset="latest",
+    enable_auto_commit=True,
+    value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+    key_deserializer=lambda k: k.decode("utf-8") if k else None
+)
+
+for msg in consumer:
+    print(msg.key, msg.value)
+```
+
+Para rodar localmente:
+
+```bash
+pip install kafka-python
+python consumer.py
+```
+
+
+## Consumindo no Databricks
+
+- Use Structured Streaming apontando para localhost:9092 quando o cluster/notebook conseguir alcançar seu host local.
+- Se o Databricks estiver remoto (nuvem) e seu Kafka for local, será necessário expor um listener acessível publicamente/privadamente e abrir portas/firewall; “localhost” não funcionará nesse cenário.
+
+Exemplo simples:
+
+```python
+raw = (spark.readStream
+    .format("kafka")
+    .option("kafka.bootstrap.servers", "localhost:9092")
+    .option("subscribe", "mensagens")
+    .option("startingOffsets", "latest")
+    .load())
+```
+
+
+## Comandos úteis
+
+- Subir/atualizar serviços:
+
+```bash
+docker compose up -d --build
+```
+
+- Parar serviços:
+
+```bash
+docker compose down
+```
+
+- Ver logs:
+
+```bash
+docker logs -f kafka
+docker logs -f producer
+```
+
+- Reset total (remove volumes):
+
+```bash
+docker compose down -v
+```
+
+
+## Troubleshooting
+
+- Producer não conecta:
+    - Dentro do Docker: use bootstrap kafka:19092.
+    - Fora do Docker (host): use localhost:9092.
+    - Confirme se a porta 9092 está exposta e o broker “kafka” está no ar.
+- Mensagens não aparecem na UI:
+    - Atualize a página do tópico na Kafka UI.
+    - Verifique logs do producer para exceptions de conexão/serialização.
+- Tópico não existe:
+    - Crie o tópico na UI ou envie uma primeira mensagem (se auto-criação estiver habilitada).
+- Dados com acentuação truncados:
+    - Garanta ensure_ascii=False no json.dumps e UTF-8 nos serializadores.
+
+
+## Próximos passos
+
+- Criar tópicos com partições e políticas de retenção específicas para cenários reais.
+- Adicionar um consumer estruturado (Spark/Databricks) gravando em Delta/Parquet.
+- Habilitar SASL/SSL e ACLs para ambientes não locais.
+- Adicionar testes e GitHub Actions para lint/CI básico.
+
+
+## Licença
+
+Defina a licença do seu projeto (por exemplo, MIT) e inclua o arquivo LICENSE.

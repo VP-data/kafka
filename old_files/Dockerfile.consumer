@@ -1,0 +1,10 @@
+# imagem base
+FROM python:3.9
+# pasta de trabalho
+WORKDIR /the/workdir/path
+# copiando script
+COPY consumer.py /the/workdir/path/
+# instalando libs
+RUN pip install kafka-python minio
+# rodando o script
+CMD ["python", "consumer.py"]

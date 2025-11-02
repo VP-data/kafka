@@ -6,7 +6,7 @@ import random
 
 fake = Faker('pt_BR')
 producer = KafkaProducer(
-    bootstrap_servers="kafka:19092",  # dentro da rede Docker
+    bootstrap_servers="kafka:9093",
     value_serializer=lambda v: json.dumps(v).encode("utf-8"),
     key_serializer=lambda k: k.encode("utf-8")
 )
@@ -32,5 +32,5 @@ if __name__ == "__main__":
         data = generate_user_data()
         key = data["user_id"]
         producer.send(topic, key=key, value=data)
-        producer.flush()  # garante envio em ambientes efêmeros
+        producer.flush()
         time.sleep(1)
